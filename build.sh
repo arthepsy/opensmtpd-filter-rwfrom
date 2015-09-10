@@ -32,11 +32,11 @@ _ierr $? "git clean failed."
 cd -- "${_cdir}"
 
 echo "- patching OpenSMTPD-extras"
-patch -d ${_ose} < patch-OpenSMTPD-extras
+patch -d "${_ose}" < ./patch-OpenSMTPD-extras
 _ierr $? "patch failed."
 
 echo "- copying filter-rwfrom"
-cp -R -- ./filter-rwfrom "${_ose}/extras/wip/filters/"
+cp -R ./filter-rwfrom "${_ose}/extras/wip/filters/"
 _ierr $? "copy failed."
 
 echo "- building OpenSMTPD-extras"
@@ -49,12 +49,12 @@ make
 _ierr $? "make failed."
 
 echo "- building filter-rwfrom"
-cd ./extras/wip/filters/filter-rwfrom
+cd -- "./extras/wip/filters/filter-rwfrom"
 make
 _ierr $? "make failed."
 
 echo "- success"
 cd -- "${_cdir}"
-ls -al "${_ose}/extras/wip/filters/filter-rwfrom/filter-rwfrom"
+ls -al -- "${_ose}/extras/wip/filters/filter-rwfrom/filter-rwfrom"
 
 
