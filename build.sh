@@ -43,7 +43,13 @@ echo "- building OpenSMTPD-extras"
 cd -- "${_ose}"
 ./bootstrap
 _ierr $? "bootstrap failed."
-./configure
+
+_conf=""
+case `uname -s` in
+	Linux) _conf="--with-privsep-user=smtpd" ;;
+esac
+
+./configure "${_conf}"
 _ierr $? "configure failed."
 make
 _ierr $? "make failed."
