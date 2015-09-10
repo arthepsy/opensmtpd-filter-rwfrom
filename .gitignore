@@ -1,0 +1,6 @@
+*~
+*.o
+*.am
+*.in
+OpenSMTPD-extras
+
