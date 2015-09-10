@@ -1,6 +1,5 @@
 *~
 *.o
-*.am
 *.in
+Makefile
 OpenSMTPD-extras
-
