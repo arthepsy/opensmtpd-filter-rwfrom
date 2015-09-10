@@ -21,11 +21,13 @@
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <libutil.h>
 #include <string.h>
 #include <ctype.h>
 #include <unistd.h>
 #include <util.h>
+#ifdef HAVE_LIBUTIL_H
+#include <libutil.h>
+#endif
 
 #include "smtpd-defines.h"
 #include "smtpd-api.h"
