@@ -17,18 +17,18 @@ if [ ! -d "${_ose}" ]; then
 	_ierr $? "git clone failed."
 fi
 
+echo "- cleaning OpenSMTPD-extras"
+cd -- "${_ose}"
+git clean -fdx
+_ierr $? "git clean failed."
+git reset --hard origin/master
+_ierr $? "git reset failed."
+cd -- "${_cdir}"
+
 echo "- updating OpenSMTPD-extras"
 cd -- "${_ose}"
 git pull
 _ierr $? "git pull failed."
-cd -- "${_cdir}"
-
-echo "- cleaning OpenSMTPD-extras"
-cd -- "${_ose}"
-git reset --hard origin/master
-_ierr $? "git reset failed."
-git clean -fdx
-_ierr $? "git clean failed."
 cd -- "${_cdir}"
 
 echo "- patching OpenSMTPD-extras"
