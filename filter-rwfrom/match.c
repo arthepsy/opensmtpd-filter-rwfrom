@@ -43,7 +43,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "xmalloc.h"
 #include "match.h"
 
 /*

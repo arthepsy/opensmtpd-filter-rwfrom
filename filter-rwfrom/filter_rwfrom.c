@@ -14,6 +14,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#define MY_FILTER_API_VERSION 51
 #include "includes.h"
 
 #include <sys/types.h>
@@ -24,12 +25,13 @@
 #include <string.h>
 #include <ctype.h>
 #include <unistd.h>
-#include <util.h>
 #ifdef HAVE_LIBUTIL_H
 #include <libutil.h>
 #endif
 
+#if MY_FILTER_API_VERSION < 51
 #include "smtpd-defines.h"
+#endif
 #include "smtpd-api.h"
 #include "log.h"
 
@@ -37,7 +39,7 @@
 
 #define RWFROM_CONF "/etc/mail/filter-rwfrom.conf"
 
-struct rwfrom {
+struct rwfrom_tx {
 	int in_hdr;
 	char *mail;
 	char *rcpt;
@@ -92,27 +94,35 @@ static int
 rwfrom_conf(const char *c)
 {
 	FILE *f;
-	char *line;
-	size_t no = 0;
+	char *line = NULL;
+	size_t sz = 0, no = 0;
+	ssize_t len;
 
 	if ((f = fopen(c, "r")) == NULL) {
 		log_warn("warn: filter-rwfrom: conf: fopen %s", c);
 		return -1;
 	}
-	while ((line = fparseln(f, NULL, &no, NULL, 0)) != NULL) {
-		if (rwfrom_parse(line, no) == -1) {
+	while ((len = getline(&line, &sz, f)) != -1) {
+		if (rwfrom_parse(line, ++no) == -1) {
 			free(line);
 			fclose(f);
 			return -1;
 		}
 		free(line);
 	}
+	if (ferror(f)) {
+		log_warn("warn: filter-rwfrom: conf: getline");
+		free(line);
+		fclose(f);
+		return -1;
+	}
+	free(line);
 	fclose(f);
 	return 0;
 }
 
 static int
-rwfrom_rewrite(uint64_t id, struct rwfrom *rw, const char *hdr)
+rwfrom_rewrite(uint64_t id, struct rwfrom_tx *rw, const char *hdr)
 {
 	char buf[SMTPD_MAXLINESIZE];
 	struct rwfrom_rule *r;
@@ -138,69 +148,110 @@ rwfrom_rewrite(uint64_t id, struct rwfrom *rw, const char *hdr)
 	return -1;
 }
 
+#if MY_FILTER_API_VERSION > 50
+static void *
+rwfrom_tx_alloc(uint64_t id)
+{
+	struct rwfrom_tx	*tx;
+
+	tx = xcalloc(1, sizeof (struct rwfrom_tx), "rwfrom_tx_alloc");
+	tx->in_hdr=1;
+
+	return tx;
+}
+
 static void
-free_rwfrom(uint64_t id)
+rwfrom_tx_free(void *ctx)
 {
-	struct rwfrom *rw;
+	struct rwfrom_tx	*tx = ctx;
 
-	if ((rw = filter_api_get_udata(id)) != NULL) {
-		free(rw->mail);
-		free(rw->rcpt);
-		free(rw);
-		filter_api_set_udata(id, NULL);
+	free(tx->mail);
+	free(tx->rcpt);
+	free(tx);
+}
+#else
+static struct rwfrom_tx *
+rwfrom_init_udata(uint64_t id)
+{
+	struct rwfrom_tx *tx;
+
+	if ((tx = filter_api_get_udata(id)) == NULL) {
+		tx = xmalloc(sizeof *tx, "rewrite_from: on_hello");
+		tx->in_hdr = 1;
+		tx->mail = NULL;
+		tx->rcpt = NULL;
+		filter_api_set_udata(id, tx);
 	}
+
+	return tx;
 }
 
-static struct rwfrom *
-init_rwfrom(uint64_t id)
+static void
+rwfrom_free_udata(uint64_t id)
 {
-	struct rwfrom *rw;
-
-	if ((rw = filter_api_get_udata(id)) == NULL) {
-		rw = xmalloc(sizeof *rw, "rewrite_from: on_hello");
-		filter_api_set_udata(id, rw);
-		rw->in_hdr = 1;
-		rw->mail = NULL;
-		rw->rcpt = NULL;
+	struct rwfrom_tx	*tx;
+	
+	if ((tx = filter_api_get_udata(id)) != NULL) {
+		free(tx->mail);
+		free(tx->rcpt);
+		free(tx);
 	}
-	return rw;
+	filter_api_set_udata(id, NULL);
 }
+#endif
 
 static int
-on_mail(uint64_t id, struct mailaddr *mail)
+rwfrom_on_mail(uint64_t id, struct mailaddr *mail)
 {
-	struct rwfrom *rw;
-	rw = init_rwfrom(id);
-	rw->mail = xstrdup(filter_api_mailaddr_to_text(mail), 
+	struct rwfrom_tx	*tx;
+
+#if MY_FILTER_API_VERSION > 50
+	tx = filter_api_transaction(id);
+#else
+	tx = rwfrom_init_udata(id);
+#endif
+	tx->mail = xstrdup(filter_api_mailaddr_to_text(mail), 
 	    "filter-rwfrom: on_rcpt");
 	
 	return filter_api_accept(id);
 }
 
 static int
-on_rcpt(uint64_t id, struct mailaddr *rcpt)
+rwfrom_on_rcpt(uint64_t id, struct mailaddr *rcpt)
 {
-	struct rwfrom *rw;
+	struct rwfrom_tx	*tx;
 
-	rw = init_rwfrom(id);
-	rw->rcpt = xstrdup(filter_api_mailaddr_to_text(rcpt), 
+#if MY_FILTER_API_VERSION > 50
+	tx = filter_api_transaction(id);
+#else
+	tx = rwfrom_init_udata(id);
+#endif
+	tx->rcpt = xstrdup(filter_api_mailaddr_to_text(rcpt), 
 	    "filter-rwfrom: on_rcpt");
 	return filter_api_accept(id);
 }
 
 static void
-on_dataline(uint64_t id, const char *line)
+#if MY_FILTER_API_VERSION > 50
+rwfrom_on_msg_line(uint64_t id, const char *line)
+#else
+rwfrom_on_dataline(uint64_t id, const char *line)
+#endif
 {
 	static const char *hdr_from = "From:";
-	struct rwfrom *rw;
+	struct rwfrom_tx	*tx;
 
-	rw = init_rwfrom(id);
-	if (rw->in_hdr) {
+#if MY_FILTER_API_VERSION > 50
+	tx = filter_api_transaction(id);
+#else
+	tx = rwfrom_init_udata(id);
+#endif
+	if (tx->in_hdr) {
 		if (strlen(line) == 0) {
-			rw->in_hdr = 0;
+			tx->in_hdr = 0;
 		}
 		else if (strncasecmp(hdr_from, line, strlen(hdr_from)) == 0) {
-			if (rwfrom_rewrite(id, rw, hdr_from) == 0)
+			if (rwfrom_rewrite(id, tx, hdr_from) == 0)
 				return;
 		}
 	}
@@ -208,29 +259,28 @@ on_dataline(uint64_t id, const char *line)
 }
 
 static int
-on_eom(uint64_t id, size_t size)
+#if MY_FILTER_API_VERSION > 50
+rwfrom_on_msg_end(uint64_t id, size_t size)
+#else
+rwfrom_on_eom(uint64_t id, size_t size)
+#endif
 {
-	free_rwfrom(id);
 	return filter_api_accept(id);
 }
 
+#if MY_FILTER_API_VERSION < 51
 static void
-on_reset(uint64_t id)
+rwfrom_on_commit(uint64_t id)
 {
-	free_rwfrom(id);
+	rwfrom_free_udata(id);
 }
 
 static void
-on_rollback(uint64_t id)
+rwfrom_on_rollback(uint64_t id)
 {
-	free_rwfrom(id);
+	rwfrom_free_udata(id);
 }
-
-static void
-on_disconnect(uint64_t id)
-{
-	free_rwfrom(id);
-}
+#endif
 
 
 int
@@ -258,13 +308,19 @@ main(int argc, char **argv)
 	if (rwfrom_conf((argc == 1) ? argv[0] : RWFROM_CONF) == -1)
 		fatalx("filter-rwfrom: configuration failed");
 
-	filter_api_on_mail(on_mail);
-	filter_api_on_rcpt(on_rcpt);
-	filter_api_on_dataline(on_dataline);
-	filter_api_on_eom(on_eom);
-	filter_api_on_disconnect(on_disconnect);
-	filter_api_on_reset(on_reset);
-	filter_api_on_rollback(on_rollback);
+	filter_api_on_mail(rwfrom_on_mail);
+	filter_api_on_rcpt(rwfrom_on_rcpt);
+#if MY_FILTER_API_VERSION > 50
+	filter_api_on_msg_line(rwfrom_on_msg_line);
+	filter_api_on_msg_end(rwfrom_on_msg_end);
+	filter_api_transaction_allocator(rwfrom_tx_alloc);
+	filter_api_transaction_destructor(rwfrom_tx_free);
+#else
+	filter_api_on_dataline(rwfrom_on_dataline);
+	filter_api_on_eom(rwfrom_on_eom);
+	filter_api_on_commit(rwfrom_on_commit);
+	filter_api_on_rollback(rwfrom_on_rollback);
+#endif
 	filter_api_loop();
 
 	log_debug("debug: filter-rwfrom: exiting");
