@@ -3,3 +3,4 @@
 *.in
 Makefile
 OpenSMTPD-extras
+opensmtpd-extras-*
